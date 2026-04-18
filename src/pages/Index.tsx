@@ -1,5 +1,16 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
+
+const PROGRESS_URL = "https://functions.poehali.dev/5048a1bd-0ab6-4e8d-acb1-9ce0150792fa";
+
+function getSessionId(): string {
+  let sid = localStorage.getItem("cybershield_sid");
+  if (!sid) {
+    sid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem("cybershield_sid", sid);
+  }
+  return sid;
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Section = "intro" | "signs" | "community" | "scenarios" | "tips";
@@ -52,6 +63,26 @@ const QUIZ_QUESTIONS = [
       { text: "Промолчишь, чтобы не поссориться", correct: false },
     ],
     explanation: "Распространение чужих фото без согласия — нарушение приватности и закона.",
+  },
+  {
+    question: "Ты стал свидетелем кибербулинга: в паблике унижают твоего одноклассника. Как поступишь?",
+    options: [
+      { text: "Поставлю лайк — это не моё дело", correct: false },
+      { text: "Напишу поддерживающий комментарий жертве и сообщу модераторам", correct: true },
+      { text: "Перешлю другим, чтобы они тоже видели", correct: false },
+      { text: "Промолчу, чтобы не навлечь на себя", correct: false },
+    ],
+    explanation: "Поддержка жертвы и жалоба модераторам — это правильная реакция свидетеля. Молчание = соучастие.",
+  },
+  {
+    question: "Незнакомец в игре постоянно оскорбляет тебя и мешает играть. Что делать?",
+    options: [
+      { text: "Оскорблять в ответ — он первый начал", correct: false },
+      { text: "Использовать функцию блокировки и пожаловаться на игрока", correct: true },
+      { text: "Удалить игру навсегда", correct: false },
+      { text: "Поменять ник и продолжить играть", correct: false },
+    ],
+    explanation: "В каждой игре есть инструменты жалоб и блокировки. Используй их — это меняет токсичную среду.",
   },
 ];
 
@@ -415,10 +446,49 @@ export default function Index() {
   const [achievements, setAchievements] = useState<Achievement[]>(ACHIEVEMENTS);
   const [showAchievement, setShowAchievement] = useState<Achievement | null>(null);
   const [showWelcome, setShowWelcome] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const topRef = useRef<HTMLDivElement>(null);
+  const sessionId = useRef(getSessionId());
 
   const XP_PER_LEVEL = 200;
   const currentLevelXp = xp % XP_PER_LEVEL;
+
+  // Загрузка прогресса при старте
+  useEffect(() => {
+    fetch(PROGRESS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "load", session_id: sessionId.current }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.xp > 0 || data.completed_sections?.length > 0) {
+          setXp(data.xp);
+          setLevel(data.level);
+          setCompleted(data.completed_sections as Section[]);
+          setAchievements(prev => prev.map(a => ({ ...a, unlocked: data.achievements.includes(a.id) })));
+          setShowWelcome(false);
+        }
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  // Сохранение прогресса
+  const saveProgress = useCallback((newXp: number, newLevel: number, newCompleted: Section[], newAchievements: Achievement[]) => {
+    fetch(PROGRESS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "save",
+        session_id: sessionId.current,
+        xp: newXp,
+        level: newLevel,
+        completed_sections: newCompleted,
+        achievements: newAchievements.filter(a => a.unlocked).map(a => a.id),
+      }),
+    }).catch(() => {});
+  }, []);
 
   const addXp = (amount: number) => {
     setXp(prev => {
@@ -446,21 +516,43 @@ export default function Index() {
   const completeSection = (id: Section, xpAmount: number) => {
     if (completed.includes(id)) return;
     const newCompleted = [...completed, id];
+    const newXp = xp + xpAmount;
+    const newLevel = Math.floor(newXp / XP_PER_LEVEL) + 1;
+
     setCompleted(newCompleted);
     addXp(xpAmount);
-    if (newCompleted.length === 1) unlockAchievement("first");
-    if (id === "intro") unlockAchievement("reader");
-    if (id === "signs") unlockAchievement("explorer");
-    if (id === "community") unlockAchievement("helper");
-    if (newCompleted.length === SECTIONS.length) unlockAchievement("hero");
+
+    let newAchievements = achievements;
+    const unlock = (aid: string) => {
+      newAchievements = newAchievements.map(a => a.id === aid ? { ...a, unlocked: true } : a);
+      unlockAchievement(aid);
+    };
+    if (newCompleted.length === 1) unlock("first");
+    if (id === "intro") unlock("reader");
+    if (id === "signs") unlock("explorer");
+    if (id === "community") unlock("helper");
+    if (newCompleted.length === SECTIONS.length) unlock("hero");
+
     setActiveSection(null);
     topRef.current?.scrollIntoView({ behavior: "smooth" });
+    saveProgress(newXp, newLevel, newCompleted, newAchievements);
   };
 
   const openSection = (id: Section) => {
     setActiveSection(id);
     topRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+
+  if (!loaded) {
+    return (
+      <div className="min-h-screen bg-background cyber-grid flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="text-4xl animate-float">🛡️</div>
+          <p className="font-orbitron text-neon-cyan text-sm animate-pulse-glow">Загрузка прогресса...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background cyber-grid" ref={topRef}>

@@ -1,0 +1,31 @@
+{
+  "tests": [
+    {
+      "name": "Сохранение прогресса",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "save", "session_id": "test-abc", "xp": 125, "level": 1, "completed_sections": ["intro"], "achievements": ["first"] },
+      "expectedStatus": 200,
+      "expectedBody": { "ok": true },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Загрузка прогресса",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "load", "session_id": "test-abc" },
+      "expectedStatus": 200,
+      "expectedBody": { "xp": 125 },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Загрузка нового пользователя",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "load", "session_id": "brand-new-user-xyz" },
+      "expectedStatus": 200,
+      "expectedBody": { "xp": 0, "level": 1 },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
